@@ -17,7 +17,14 @@ import sqlite3
 from pathlib import Path
 from datetime import datetime
 
-VAULT_PATH = Path(os.environ.get("OBSIDIAN_VAULT_PATH", Path.home() / "Documents" / "Obsidian Vault"))
+_default_vault = Path.home() / "Documents" / "Obsidian Vault"
+_env_vault = os.environ.get("OBSIDIAN_VAULT_PATH", "").strip()
+VAULT_PATH = Path(_env_vault) if _env_vault else _default_vault
+
+if not VAULT_PATH.exists():
+    print(f"❌ Vault não encontrado: {VAULT_PATH}")
+    print("   Sete OBSIDIAN_VAULT_PATH ou edite o script.")
+    sys.exit(1)
 DB_PATH = Path.home() / ".obsidian_search.db"
 CHUNK_SIZE = 400
 CHUNK_OVERLAP = 80
@@ -151,7 +158,7 @@ def index_vault(use_tfidf=False, force=False):
                     if existing and not force:
                         continue
                     all_chunks_text.append(chunk)
-                    all_meta.append((cid, rel, ci, chunk[:200]))
+                    all_meta.append((cid, rel, ci, chunk[:400]))
             except Exception as e:
                 print(f"  ⚠️ {rel}: {e}")
         
@@ -217,7 +224,7 @@ def index_vault(use_tfidf=False, force=False):
                     if existing:
                         continue
                     all_texts.append(chunk)
-                    all_meta.append((cid, rel, ci, chunk[:200]))
+                    all_meta.append((cid, rel, ci, chunk[:400]))
                 
                 db.execute("INSERT OR REPLACE INTO files (file_path, last_modified, last_indexed) VALUES (?, ?, ?)",
                            (rel, mtime, datetime.now().isoformat()))
@@ -286,14 +293,14 @@ def search(query, top_k=5):
     
     all_chunks = db.execute("SELECT rowid, file_path, chunk_index, content FROM chunks ORDER BY rowid").fetchall()
     
-    print(f"🔍 \"{query}\"\n")
+    print(f"🔍 \"{query}\" — {index.ntotal} chunks indexados\n")
     for rank, (score, idx) in enumerate(zip(scores[0], indices[0])):
         if idx < 0 or idx >= len(all_chunks):
             continue
         _, fpath, chunk_idx, preview = all_chunks[idx]
         bar = "█" * int(float(score) * 20)
-        print(f"  {rank+1}. [{float(score):.2%}] {bar}  {fpath}")
-        print(f"     {preview[:100]}...")
+        print(f"  {rank+1}. [{float(score):.2%}] {bar}  {fpath} [chunk {chunk_idx}]")
+        print(f"     {preview[:200]}...")
         print()
     db.close()
 
@@ -303,6 +310,7 @@ def status():
     
     fc = db.execute("SELECT COUNT(*) FROM files").fetchone()[0]
     cc = db.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+    last = db.execute("SELECT MAX(last_indexed) FROM files").fetchone()[0]
     
     print(f"📁 {VAULT_PATH}")
     print(f"📄 Arquivos: {fc} | Chunks SQLite: {cc}")
@@ -311,6 +319,7 @@ def status():
         print(f"📦 FAISS: {idx.ntotal} chunks, dim={idx.d}")
     else:
         print("❌ Sem índice FAISS")
+    print(f"🕐 Última indexação: {last or 'nunca'}")
     db.close()
 
 if __name__ == "__main__":
